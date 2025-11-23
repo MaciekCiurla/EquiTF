@@ -25,9 +25,9 @@ terraform {
   }
 
   backend "azurerm" {
-    resource_group_name  = "tfstate"
-    storage_account_name = "tfstatepidevelopment001"
-    container_name       = "powerintegration"
+    resource_group_name  = "MC"
+    storage_account_name = "mctf"
+    container_name       = "tfstate"
     key                  = "powerintegration.tfstate"
   }
 }
@@ -48,4 +48,5 @@ provider "azurerm" {
       prevent_deletion_if_contains_resources = false
     }
   }
+
 }
