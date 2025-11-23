@@ -1,0 +1,302 @@
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: The environment that the job references.
+        type: string
+        required: true
+
+      backend_storage_account:
+        description: The name of storage account where terraform state files are stored.
+        type: string
+        required: true
+
+      working_directory:
+        description: The working directory to run the Terraform commands in.
+        type: string
+        required: false
+        default: "."
+
+      terraform_version:
+        description: The version of Terraform to install.
+        type: string
+        required: false
+        default: 1.12.2
+
+      workspace:
+        description: 'Workspace which operations to be performed on'
+        default: ''
+        type: string
+
+      force_container_recreation:
+        description: 'Force recreation of container groups'
+        type: boolean
+        required: false
+        default: false
+        
+      target_containers:
+        description: 'Comma-separated list of container names to recreate'
+        type: string
+        required: false
+        default: ''
+
+      branch_or_tag:
+        required: false
+        type: string
+        default: 'main'
+
+    secrets:
+      AZURE_CLIENT_ID:
+        description: The client ID of the Azure AD service principal to use for authenticating to Azure.
+        required: true
+
+      AZURE_SUBSCRIPTION_ID:
+        description: The ID of the Azure subscription to create the resources in.
+        required: true
+
+      AZURE_TENANT_ID:
+        description: The ID of the Azure tenant to create the resources in.
+        required: true
+
+env:
+  # Configure Terraform to run in automation.
+  # Makes output more consistent and less confusing in workflows where users don't directly execute Terraform commands.
+  TF_IN_AUTOMATION: true
+
+  # Configure OIDC authentication to Azure using environment variables.
+  # Required by the AzureRM backend and provider.
+  ARM_USE_OIDC: true
+  ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+  ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+
+jobs:
+  terraform-plan:
+    name: 'Terraform Plan'
+    runs-on: ubuntu-static
+    environment: ${{ inputs.environment }}
+
+    env:
+      # This is needed since we are running terraform with read-only permissions.
+      ARM_SKIP_PROVIDER_REGISTRATION: true
+
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ inputs.working_directory }}
+
+    # Queue jobs that target the same Terraform configuration.
+    concurrency:
+      group: terraform @ ${{ inputs.working_directory }}
+      cancel-in-progress: false
+
+    outputs:
+      tfplanExitCode: ${{ steps.plan.outputs.exitcode }}
+      workspace: ${{ steps.get-workspace.outputs.workspace }}
+
+    steps:
+      # Checkout the repository to the GitHub Actions runner.
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch_or_tag || 'dev' }}
+          fetch-depth: 0
+
+      # Install specified version of the Terraform CLI.
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ inputs.terraform_version }}
+
+      # Initialize a new or existing Terraform working directory.
+      - name: Terraform Init
+        id: init
+        run: |
+          terraform init -reconfigure --backend-config="storage_account_name=${{ inputs.backend_storage_account }}"
+                    
+      # Run validate step
+      - name: Terraform Validate
+        id: validate
+        run: terraform validate -no-color
+
+      # Get the workspace name either based on environment or commit sha.
+      - name: Get Workspace name
+        id: get-workspace
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" -a "${{ inputs.workspace }}" != "" ]; then
+            echo "workspace=${{ inputs.workspace }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "pull_request" -a "${{ github.event.pull_request }}" != "" ]; then
+            # Use commit SHA to create unique workspace per commit
+            echo "workspace=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          else
+            echo "workspace=${{ inputs.environment }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Create or select terraform workspace.
+      - name: Select Terraform Workspace
+        id: workspace
+        run: |
+          terraform workspace select -or-create=true ${{ steps.get-workspace.outputs.workspace }}
+
+      - name: Prepare Container Deployment
+        if: inputs.force_container_recreation == true
+        id: prepare-deployment
+        run: |
+          # Parse container names from input
+          IFS=',' read -ra CONTAINERS <<< "${{ inputs.target_containers }}"
+          
+          targets=""
+          for container in "${CONTAINERS[@]}"; do
+            container=$(echo "$container" | xargs)  # trim whitespace
+            echo "Processing container: $container"
+            
+            case "$container" in
+              "forecast-reader")
+                echo "Tainting forecast-reader container group"
+                terraform taint azurerm_container_group.forecast_reader || echo "Resource not found or already tainted"
+                targets="$targets -target=azurerm_container_group.forecast_reader"
+                ;;
+              "public-opcua-reader")
+                echo "Tainting public-opcua-reader container group"
+                terraform taint azurerm_container_group.public_opc_reader || echo "Resource not found or already tainted"
+                targets="$targets -target=azurerm_container_group.public_opc_reader"
+                ;;
+              *)
+                echo "⚠️ Unknown container: $container"
+                ;;
+            esac
+          done
+          
+          echo "targets=$targets" >> "$GITHUB_OUTPUT"
+          echo "✅ Prepared targets: $targets"
+
+      # Generates an execution plan for Terraform
+      # An exit code of 0 indicated no changes, 1 a terraform failure, 2 there are pending changes.
+      # Terraform Plan (with conditional targeting)
+      - name: Terraform Plan
+        id: plan
+        run: |
+          if [ "${{ inputs.force_container_recreation }}" = "true" ]; then
+            echo "🎯 Running targeted plan for containers..."
+            terraform plan -no-color -detailed-exitcode -input=false -var-file=${{ inputs.environment }}.tfvars ${{ steps.prepare-deployment.outputs.targets }} -out tfplan
+          else
+            echo "📋 Running full infrastructure plan..."
+            terraform plan -no-color -detailed-exitcode -input=false -var-file=${{ inputs.environment }}.tfvars -out tfplan
+          fi
+
+      # Prepare easy to read summary.
+      - name: Create summary
+        if: always()
+        env:          
+          INIT_OUTCOME: ${{ steps.init.outcome }}
+          VALIDATE_OUTCOME: ${{ steps.validate.outcome }}
+          WORKSPACE: ${{ steps.get-workspace.outputs.workspace }}
+        run: |
+          echo "#### Terraform Initialization :gear:\`$INIT_OUTCOME\`
+          #### Terraform Validation :robot:\`$VALIDATE_OUTCOME\`
+          <details><summary>Validation Output</summary>
+
+          \`\`\`\n
+          ${{ steps.validate.outputs.stdout }}
+          \`\`\`
+    
+          </details>
+          
+          *Pusher: @$GITHUB_ACTOR, Action: \`$GITHUB_EVENT_NAME\`, Workspace: \`$WORKSPACE\`*" >> "$GITHUB_STEP_SUMMARY" 
+
+     # In case of failed pull request run clean up the workspace
+      - name: Delete Workspace
+        id: delete-workspace
+        if: github.event_name == 'pull_request' && failure()
+        run: |
+          terraform workspace select default
+          terraform workspace delete ${{ steps.get-workspace.outputs.workspace }}
+
+  terraform-apply:
+    name: 'Terraform Apply'
+    if: needs.terraform-plan.outputs.tfplanExitCode == 2
+    runs-on: ubuntu-static
+    environment: ${{ inputs.environment }}
+    needs: [ terraform-plan ]
+
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ inputs.working_directory }}
+
+    # Queue jobs that target the same Terraform configuration.
+    concurrency:
+      group: terraform @ ${{ inputs.working_directory }}
+      cancel-in-progress: false
+
+    steps:
+      # Checkout the repository to the GitHub Actions runner
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch_or_tag || 'dev' }}
+          fetch-depth: 0
+
+      # Required to run azure db script
+      - name: 'Az CLI login'
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+        # Install specified version of the Terraform CLI
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: ${{ inputs.terraform_version }}
+
+      # Initialize a new or existing Terraform working directory by creating initial files, loading any remote state, downloading modules, etc.
+      - name: Terraform Init
+        run: |
+          terraform init -reconfigure --backend-config="storage_account_name=${{ inputs.backend_storage_account }}"
+
+      # Create or select terraform workspace.
+      - name: Terraform Set Workspace
+        id: workspace
+        run: terraform workspace select -or-create=true ${{ needs.terraform-plan.outputs.workspace }}
+
+      # Terraform Apply
+      - name: Terraform Apply
+        id: apply
+        run: terraform apply -no-color -auto-approve -input=false -var-file=${{ inputs.environment }}.tfvars
+
+      # Terraform Destroy
+      - name: Terraform Destroy
+        id: destroy
+        if: github.event_name == 'pull_request' && always()
+        run: terraform apply -parallelism=2 -destroy -no-color -auto-approve -input=false -var-file=${{ inputs.environment }}.tfvars
+
+      # Delete Transient Workspace
+      - name: Terraform Delete Workspace
+        id: destroy-workspace
+        if: github.event_name == 'pull_request' && always()
+        run: |
+          terraform workspace select default
+          terraform workspace delete ${{ needs.terraform-plan.outputs.workspace }}
+
+      # Prepare easy to read summary
+      - name: Create summary
+        if: always()
+        env:
+          APPLY_OUTCOME: ${{ steps.apply.outcome }}
+          DESTROY_OUTCOME: ${{ steps.destroy.outcome }}
+          DESTROY_WORKSPACE_OUTCOME: ${{ steps.destroy-workspace.outcome }}
+
+        run: |
+          echo "#### Terraform Apply :car:\`$APPLY_OUTCOME\`
+              
+          #### Terraform Destroy :boom:\`$DESTROY_OUTCOME\`
+          
+          #### Workspace Destroy :bomb:\`$DESTROY_WORKSPACE_OUTCOME\`
+
+          *Pusher: @$GITHUB_ACTOR, Action: \`$GITHUB_EVENT_NAME\`, Workspace: ${{ needs.terraform-plan.outputs.workspace }},*" >> "$GITHUB_STEP_SUMMARY"
