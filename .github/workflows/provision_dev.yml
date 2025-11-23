@@ -27,7 +27,7 @@ jobs:
     uses: ./.github/workflows/terraform.yml
     with:
       environment: dev
-      backend_storage_account: "tfstatecdfdevelopment001"
+      backend_storage_account: "mctf"
       working_directory: "."
       workspace: ${{ inputs.workspace }}
       # For PRs, use the PR head ref; otherwise use dev branch
