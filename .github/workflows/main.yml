@@ -10,6 +10,8 @@ permissions:
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
+    environment: 
+      name: 'dev'
     steps:
       - name: Azure CLI script
         uses: azure/cli@v2
