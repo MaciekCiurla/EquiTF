@@ -15,9 +15,9 @@ variable "subscription_details" {
   })
 }
 
-variable "admin_user" {
-  type = string
-}
+#variable "admin_user" {
+#  type = string
+#}
 
 variable "resource_name_prefix" {
   type = string

@@ -1,8 +1,8 @@
 data "azurerm_client_config" "current" {}
 
-data "azuread_user" "admin_user" {
-  user_principal_name = var.admin_user
-}
+#data "azuread_user" "admin_user" {
+#  user_principal_name = var.admin_user
+#}
 
 #data "azurerm_resource_group" "rg" {
 #  name = "rg-${var.resource_name_prefix}-infra-${var.location}-${var.environment}"
