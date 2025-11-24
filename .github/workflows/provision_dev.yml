@@ -16,10 +16,10 @@ on:
         description: 'Workspace which operations to be performed on'
         default: 'dev'
         type: string
-      branch_or_tag:
-        description: 'Branch or tag to deploy from'
-        default: 'dev'
-        type: string
+#      branch_or_tag:
+#        description: 'Branch or tag to deploy from'
+#        default: 'dev'
+#        type: string
 
 jobs:
   provision:
@@ -30,8 +30,8 @@ jobs:
       backend_storage_account: "mctf"
       working_directory: "."
       workspace: ${{ inputs.workspace }}
-      # For PRs, use the PR head ref; otherwise use dev branch
-      branch_or_tag: ${{ github.event.pull_request.head.ref || inputs.branch_or_tag || 'dev' }}
+ #     # For PRs, use the PR head ref; otherwise use dev branch
+ #     branch_or_tag: ${{ github.event.pull_request.head.ref || inputs.branch_or_tag || 'dev' }}
     secrets:
       AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
       AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
