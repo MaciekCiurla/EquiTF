@@ -5,7 +5,7 @@ subscription_details = {
 
 resource_name_prefix = "pi"
 environment          = "dev"
-location             = "west europe"
+location             = "westeurope"
 # admin_user           = "mikec@poczta.onet.pl"
 vm_id                = "c3fc546b-8df2-4721-b1e0-c0b57e3d2234"
 secret01_value       = ""
