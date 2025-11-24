@@ -8,5 +8,6 @@ environment          = "dev"
 location             = "west europe"
 # admin_user           = ""
 vm_id                = ""
-secret01_value       = ''
-secret02_value       = ''
+secret01_value       = ""
+secret02_value       = ""
+
