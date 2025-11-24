@@ -77,7 +77,7 @@ env:
 jobs:
   terraform-plan:
     name: 'Terraform Plan'
-    runs-on: ubuntu-static
+    runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
 
     env:
