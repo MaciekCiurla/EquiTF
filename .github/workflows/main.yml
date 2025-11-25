@@ -18,7 +18,12 @@ jobs:
         with:
           inlineScript: |
             az version
-    
+      - name: Manual Workflow Approval
+        uses: trstringer/manual-approval@v1.9.0
+        with:
+          approvers: mikec@poczta.onet.pl
+          issue-title: Wait for a decision
+          exclude-workflow-initiator-as-approver: no
       - name: Azure login
         uses: azure/login@v2
         with:
