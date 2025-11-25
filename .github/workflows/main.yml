@@ -4,9 +4,10 @@
 name: Run Azure Login with OIDC
 on: [push]
 
-permissions: write-all
-#  id-token: write
-#  contents: read
+permissions: 
+  id-token: write
+  contents: write
+  repository-projects: write
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
