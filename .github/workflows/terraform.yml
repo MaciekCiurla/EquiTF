@@ -220,14 +220,23 @@ jobs:
     name: 'Manual Approval'
     if: needs.terraform-plan.outputs.tfplanExitCode == 2
     runs-on: ubuntu-latest
-    environment: ${{ inputs.environment }}
+    environment: 
+      name: ${{ inputs.environment }}
+      url: ''
     needs: [ terraform-plan ]
     steps:
       - name: Waiting for manual approval
         run: |
           echo "✅ Terraform plan completed successfully with changes detected."
-          echo "⏳ Waiting for manual approval to proceed with terraform apply..."
-          echo "👤 Please review the plan output above and approve this job to continue with the deployment."
+          echo "⏳ This job is waiting for manual approval from a required reviewer."
+          echo "👤 Please review the terraform plan output above and approve this job in GitHub to continue with the deployment."
+          echo ""
+          echo "📋 Plan Summary:"
+          echo "   - Workspace: ${{ needs.terraform-plan.outputs.workspace }}"
+          echo "   - Environment: ${{ inputs.environment }}"
+          echo "   - Actor: ${{ github.actor }}"
+          echo ""
+          echo "⏸️  Workflow paused - waiting for approval..."
 
   terraform-apply:
     name: 'Terraform Apply'
