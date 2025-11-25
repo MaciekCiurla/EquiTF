@@ -24,7 +24,7 @@ jobs:
           approvers: mikec@poczta.onet.pl
           secret: ${{ github.TOKEN }}
           issue-title: Wait for a decision
-          exclude-workflow-initiator-as-approver: no
+          exclude-workflow-initiator-as-approver: false
       - name: Azure login
         uses: azure/login@v2
         with:
